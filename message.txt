@@ -1,0 +1,104 @@
+-- 4
+
+DELIMITER $
+
+CREATE PROCEDURE changeMoney(INOUT amount_of_money DOUBLE, IN course_out VARCHAR(50),IN course_in VARCHAR(50))
+BEGIN
+	-- SELECT amount_of_money;
+	IF(course_out = 'BGN' && course_in='EUR') THEN SET amount_of_money = amount_of_money*0.51;
+    ELSEIF(course_out = 'EUR' && course_in='BGN') THEN SET amount_of_money = amount_of_money*1.96;
+    ELSEIF(course_out = 'BGN' && course_in='BGN') THEN SET amount_of_money = amount_of_money;
+    ELSEIF(course_out = 'EUR' && course_in='EUR') THEN SET amount_of_money = amount_of_money;
+    END IF;
+   --  SELECT amount_of_money;
+END $
+
+DELIMITER ;
+DROP PROCEDURE changeMoney;
+
+SET @amount_of_money  = 6.11 ;
+CALL changeMoney(@amount_of_money,'EUR','BGN');
+SELECT @amount_of_money;
+
+
+-- 5
+
+DELIMITER $$
+CREATE PROCEDURE transfer_money_in_another(customer_account_OUT INT, customer_account_IN INT, amount_to_add DOUBLE)
+BEGIN
+	START TRANSACTION;
+		IF((SELECT ca.amount FROM customer_accounts AS ca WHERE ca.id = customer_account_OUT) < amount_to_add OR amount_to_add<0)  THEN ROLLBACK;
+        
+        ELSEIF((SELECT currency FROM customer_accounts WHERE id=customer_account_OUT) NOT IN('BGN','EUR')) THEN ROLLBACK;
+        
+        ELSEIF((SELECT currency FROM customer_accounts WHERE id=customer_account_IN) NOT IN('BGN','EUR')) THEN ROLLBACK;
+        
+        ELSE
+			UPDATE customer_accounts
+			SET amount = amount - amount_to_add
+			WHERE customer_accounts.id = customer_account_OUT;
+			IF (ROW_COUNT() != 1) THEN ROLLBACK;
+			
+			ELSE 
+			CALL changeMoney(@amount_to_add,(SELECT currency FROM customer_accounts WHERE id=customer_account_OUT),(SELECT currency FROM customer_accounts WHERE id=customer_account_IN));
+			UPDATE customer_accounts
+			SET amount = @amount_to_add
+			WHERE customer_accounts.id = customer_account_IN;
+				IF (ROW_COUNT() != 1) THEN ROLLBACK;
+				END IF;
+            END IF;
+		END IF;
+        IF (ROW_COUNT() != 1) THEN SELECT 'FAIL';
+        END IF;
+	COMMIT;
+END $$
+DELIMITER ;
+
+DROP PROCEDURE transfer_money;
+SET @amount_of_money  = 6.11;
+CALL transfer_money(1,2,@amount_of_money);
+
+-- 2
+delimiter |
+CREATE TRIGGER after_salarypayment_delete BEFORE DELETE ON salarypayments
+FOR EACH ROW 
+BEGIN
+INSERT INTO salarypayments_log(operation,
+old_coach_id,
+new_coach_id,
+old_month,
+new_month,
+old_year,
+new_year,
+old_salaryAmount,
+new_salaryAmount,
+old_dateOfPayment,
+new_dateOfPayment,
+dateOfLog)
+VALUES ('DELETE',OLD.coach_id,null,OLD.month,null,
+OLD.year,null,OLD.salaryAmount,null,OLD.dateOfPayment,null,NOW());
+END;
+|
+Delimiter ;
+
+
+-- 1
+drop view if exists coachinfo;
+
+create view coachinfo(name, groupInfo, sport, year, month, salaryAmaounth) as
+select coaches.name, concat(sportgroups.id, ' - ', sportgroups.location), sports.name, year(now()), month(now()), salarypayments.salaryAmount
+from coaches 
+join sportgroups
+	on coaches.id = sportgroups.coach_id
+join sports
+	on sports.id = sportgroups.sport_id
+join salarypayments
+	on coaches.id = salarypayments.coach_id
+where salarypayments.year = year(now())
+	and salarypayments.month = month(now());
+    
+-- 3
+insert into salarypayments (coach_id, month, year, salaryAmount, dateOfPayment)
+	select DISTINCT old_coach_id, old_month, old_year, old_salaryAmount, old_dateOfPayment 
+    from salarypayments_log
+    where operation like 'DELETE';
